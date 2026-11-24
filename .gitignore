@@ -1,0 +1,8 @@
+bin/
+obj/
+artifacts/
+dist/
+.vs/
+*.user
+验证记录.txt
+*.log

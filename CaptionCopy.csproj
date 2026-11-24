@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>CaptionCopy</AssemblyName>
+    <RootNamespace>CaptionCopy</RootNamespace>
+    <LangVersion>5</LangVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultPageItems>false</EnableDefaultPageItems>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>assets\App.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="src\*.cs" />
+    <EmbeddedResource Include="src\MainWindow.xaml" LogicalName="CaptionCopy.MainWindow.xaml" />
+    <EmbeddedResource Include="assets\App.ico" LogicalName="CaptionCopy.App.ico" />
+    <Reference Include="UIAutomationClient" />
+    <Reference Include="UIAutomationTypes" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+</Project>
