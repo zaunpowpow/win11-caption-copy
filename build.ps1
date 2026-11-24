@@ -6,8 +6,8 @@ $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (!(Test-Path -LiteralPath $referenceRoot)) { throw '.NET Framework 4.8 Developer Pack is required to build.' }
 $outputRoot = if ([System.IO.Path]::IsPathRooted($OutputDirectory)) { $OutputDirectory } else { Join-Path $projectRoot $OutputDirectory }
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
-$refs = @('mscorlib.dll','System.dll','System.Core.dll','System.Xml.dll','System.Xaml.dll','System.Windows.Forms.dll','WindowsBase.dll','PresentationCore.dll','PresentationFramework.dll','UIAutomationClient.dll','UIAutomationTypes.dll')
-$arguments = @('/nologo','/noconfig','/nostdlib+','/target:winexe','/platform:anycpu','/optimize+','/utf8output','/codepage:65001',('/out:' + (Join-Path $outputRoot 'CaptionCopy.exe')),('/win32manifest:' + (Join-Path $projectRoot 'app.manifest')),('/win32icon:' + (Join-Path $projectRoot 'assets\App.ico')),('/resource:' + (Join-Path $projectRoot 'assets\App.ico') + ',CaptionCopy.App.ico'),('/resource:' + (Join-Path $projectRoot 'src\MainWindow.xaml') + ',CaptionCopy.MainWindow.xaml'))
+$refs = @('mscorlib.dll','System.dll','System.Core.dll','System.Xml.dll','System.Xaml.dll','System.Drawing.dll','System.Windows.Forms.dll','WindowsBase.dll','PresentationCore.dll','PresentationFramework.dll','UIAutomationClient.dll','UIAutomationTypes.dll')
+$arguments = @('/nologo','/noconfig','/nostdlib+','/target:winexe','/platform:anycpu','/optimize+','/utf8output','/codepage:65001',('/out:' + (Join-Path $outputRoot 'CaptionCopy.exe')),('/win32manifest:' + (Join-Path $projectRoot 'app.manifest')),('/win32icon:' + (Join-Path $projectRoot 'assets\App.ico')),('/resource:' + (Join-Path $projectRoot 'assets\App.ico') + ',CaptionCopy.App.ico'),('/resource:' + (Join-Path $projectRoot 'src\SettingsWindow.xaml') + ',CaptionCopy.SettingsWindow.xaml'),('/resource:' + (Join-Path $projectRoot 'src\MainWindow.xaml') + ',CaptionCopy.MainWindow.xaml'))
 foreach ($ref in $refs) {
     $refPath = Join-Path $referenceRoot $ref
     if (!(Test-Path -LiteralPath $refPath)) { $refPath = Join-Path (Join-Path $referenceRoot 'WPF') $ref }

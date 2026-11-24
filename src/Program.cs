@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -18,7 +19,7 @@ using System.Windows.Threading;
 
 [assembly: AssemblyTitle("字幕摘录")]
 [assembly: AssemblyDescription("Windows 11 实时字幕复制工具")]
-[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
 
 namespace CaptionCopy
 {
@@ -46,6 +47,8 @@ namespace CaptionCopy
         private string _text;
         private bool _draft;
         private bool _copied;
+        private bool _selected;
+        public bool IsSelected { get { return _selected; } set { if (_selected != value) { _selected = value; Notify("IsSelected"); } } }
         public string Text { get { return _text; } set { if (_text != value) { _text = value; Notify("Text"); IsCopied = false; } } }
         public bool IsDraft { get { return _draft; } set { if (_draft != value) { _draft = value; Notify("IsDraft"); } } }
         public bool IsCopied { get { return _copied; } set { if (_copied != value) { _copied = value; Notify("IsCopied"); } } }
@@ -104,6 +107,11 @@ namespace CaptionCopy
         private bool _copying;
         private int _toastVersion;
         private DateTime _feedbackUntil;
+        private readonly AppPreferences _preferences = PreferencesStore.Load(PreferencesStore.DefaultPath);
+        private readonly Dictionary<string, Color> _backgroundColors = new Dictionary<string, Color>();
+        private bool _selecting;
+        private int _anchor, _selectionEnd;
+        private List<string> _selectionSnapshot;
 
         public MainWindowController()
         {
@@ -116,6 +124,22 @@ namespace CaptionCopy
                 foreach (BitmapFrame frame in decoder.Frames) if (frame.PixelWidth == 64) { Window.Icon = frame; break; }
             }
             Find<Image>("BrandIcon").Source = Window.Icon;
+            Find<Image>("TitleIcon").Source = Window.Icon;
+            foreach (object key in Window.Resources.Keys)
+            {
+                var brush = Window.Resources[key] as SolidColorBrush;
+                if (brush != null) _backgroundColors.Add((string)key, brush.Color);
+            }
+            ApplyAppearance();
+            Find<Button>("SettingsButton").Click += delegate { OpenSettings(); };
+            Find<Button>("MinimizeButton").Click += delegate { Window.WindowState = WindowState.Minimized; };
+            Find<Button>("MaximizeButton").Click += delegate { ToggleMaximize(); };
+            Find<Button>("CloseWindowButton").Click += delegate { Window.Close(); };
+            Find<FrameworkElement>("TitleDragArea").MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs e)
+            {
+                if (e.ClickCount == 2) ToggleMaximize();
+                else if (Window.WindowState == WindowState.Normal) Window.DragMove();
+            };
             _list = Find<ListBox>("SentenceList");
             _copyAll = Find<Button>("CopyAllButton");
             _clear = Find<Button>("ClearButton");
@@ -145,9 +169,15 @@ namespace CaptionCopy
             _reconnect.Click += LaunchCaptions;
             _latest.Click += delegate { _follow = true; ScrollToLatest(); };
             _list.AddHandler(Button.ClickEvent, new RoutedEventHandler(SentenceClicked));
+            _list.PreviewMouseLeftButtonDown += SelectionStarted;
+            _list.PreviewMouseMove += SelectionMoved;
+            _list.PreviewMouseLeftButtonUp += SelectionFinished;
+            _list.LostMouseCapture += delegate { if (_selecting) CancelSelection(); };
+            Window.Deactivated += delegate { if (_selecting) CancelSelection(); };
             _list.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(ScrollChanged));
             Window.PreviewKeyDown += async delegate(object sender, KeyEventArgs e)
             {
+                if (e.Key == Key.Escape && _selecting) { CancelSelection(); e.Handled = true; return; }
                 if (e.Key == Key.C && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
                 { e.Handled = true; await CopyAll(); }
             };
@@ -155,6 +185,7 @@ namespace CaptionCopy
             _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(100) };
             _timer.Tick += delegate
             {
+                if (_selecting) { AutoScrollSelection(); return; }
                 bool changed = Drain();
                 changed |= _engine.Tick(DateTime.UtcNow);
                 if (changed) Reconcile();
@@ -169,6 +200,135 @@ namespace CaptionCopy
         }
 
         private T Find<T>(string name) where T : class { return Window.FindName(name) as T; }
+
+        private void ApplyAppearance()
+        {
+            Window.Opacity = _preferences.WindowOpacity;
+            foreach (var entry in _backgroundColors)
+                Window.Resources[entry.Key] = new SolidColorBrush(entry.Value) { Opacity = _preferences.BackgroundOpacity };
+        }
+
+        private void ToggleMaximize()
+        {
+            if (Window.WindowState == WindowState.Maximized) Window.WindowState = WindowState.Normal;
+            else
+            {
+                // Borderless transparent windows must respect the current monitor's work area.
+                var helper = new System.Windows.Interop.WindowInteropHelper(Window);
+                var screen = System.Windows.Forms.Screen.FromHandle(helper.Handle);
+                var source = PresentationSource.FromVisual(Window);
+                var transform = source.CompositionTarget.TransformFromDevice;
+                var area = screen.WorkingArea;
+                var size = transform.Transform(new Vector(area.Width, area.Height));
+                Window.MaxWidth = size.X; Window.MaxHeight = size.Y;
+                Window.WindowState = WindowState.Maximized;
+            }
+        }
+
+        private void OpenSettings()
+        {
+            Window dialog;
+            using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("CaptionCopy.SettingsWindow.xaml")) dialog = (Window)XamlReader.Load(stream);
+            dialog.Owner = Window; dialog.Icon = Window.Icon;
+            var slider = (Slider)dialog.FindName("OpacitySlider");
+            var protect = (CheckBox)dialog.FindName("ProtectTextToggle");
+            var value = (TextBlock)dialog.FindName("OpacityValue");
+            slider.Value = _preferences.Opacity * 100;
+            protect.IsChecked = _preferences.ProtectText;
+            Action update = delegate
+            {
+                _preferences.Opacity = slider.Value / 100;
+                _preferences.ProtectText = protect.IsChecked == true;
+                value.Text = Math.Round(slider.Value) + "%";
+                ApplyAppearance();
+            };
+            slider.ValueChanged += delegate { update(); };
+            protect.Checked += delegate { update(); };
+            protect.Unchecked += delegate { update(); };
+            ((Button)dialog.FindName("ResetButton")).Click += delegate { slider.Value = 100; protect.IsChecked = true; update(); };
+            ((Button)dialog.FindName("DoneButton")).Click += delegate { dialog.Close(); };
+            ((System.Windows.Documents.Hyperlink)dialog.FindName("DeveloperLink")).Click += delegate
+            {
+                try { Process.Start(new ProcessStartInfo("https://github.com/zaunpowpow") { UseShellExecute = true }); }
+                catch { ShowToast("无法打开 GitHub 页面", true); }
+            };
+            update();
+            dialog.ShowDialog();
+            if (!PreferencesStore.Save(PreferencesStore.DefaultPath, _preferences)) ShowToast("设置已应用，保存失败", true);
+        }
+
+        private int RowAt(Point point)
+        {
+            var hit = _list.InputHitTest(point) as DependencyObject;
+            var container = hit == null ? null : ItemsControl.ContainerFromElement(_list, hit) as ListBoxItem;
+            return container == null ? -1 : _rows.IndexOf(container.DataContext as SentenceRow);
+        }
+
+        private void SelectionStarted(object sender, MouseButtonEventArgs e)
+        {
+            int index = RowAt(e.GetPosition(_list));
+            if (index < 0 || _copying) return;
+            _anchor = _selectionEnd = index;
+            _selectionSnapshot = new List<string>();
+            foreach (var row in _rows) { _selectionSnapshot.Add(row.Text); row.IsCopied = false; }
+            _selecting = true; _follow = false;
+            _list.Focus(); _list.CaptureMouse();
+            UpdateSelection(index); e.Handled = true;
+        }
+
+        private void UpdateSelection(int end)
+        {
+            if (end < 0) return;
+            _selectionEnd = end;
+            for (int i = 0; i < _rows.Count; i++) _rows[i].IsSelected = i >= Math.Min(_anchor, end) && i <= Math.Max(_anchor, end);
+            _count.Text = "已选 " + (Math.Abs(_anchor - end) + 1) + " 段 · 松开复制";
+        }
+
+        private void SelectionMoved(object sender, MouseEventArgs e)
+        {
+            if (!_selecting) return;
+            UpdateSelection(RowAt(e.GetPosition(_list))); e.Handled = true;
+        }
+
+        private void AutoScrollSelection()
+        {
+            if (_scroll == null) _scroll = FindVisual<ScrollViewer>(_list);
+            if (_scroll == null) return;
+            Point p = Mouse.GetPosition(_list);
+            if (p.Y < 20) _scroll.ScrollToVerticalOffset(_scroll.VerticalOffset - 22);
+            else if (p.Y > _list.ActualHeight - 20) _scroll.ScrollToVerticalOffset(_scroll.VerticalOffset + 22);
+            else return;
+            _list.UpdateLayout();
+            p.X = Math.Max(8, Math.Min(_list.ActualWidth - 24, p.X));
+            p.Y = Math.Max(20, Math.Min(_list.ActualHeight - 24, p.Y));
+            UpdateSelection(RowAt(p));
+        }
+
+        private void CancelSelection()
+        {
+            _selecting = false;
+            _list.ReleaseMouseCapture();
+            foreach (var row in _rows) row.IsSelected = false;
+            // Keep the reading position stable while copied feedback changes row heights.
+            // The user can resume live following with the existing "latest" button.
+            _follow = false;
+            _count.Text = _rows.Count + " 段 · 点击 / 拖选复制";
+        }
+
+        private async void SelectionFinished(object sender, MouseButtonEventArgs e)
+        {
+            if (!_selecting) return;
+            string snapshot = SelectionText.Join(_selectionSnapshot, _anchor, _selectionEnd);
+            var selected = new List<SentenceRow>();
+            for (int i = Math.Min(_anchor, _selectionEnd); i <= Math.Max(_anchor, _selectionEnd); i++) selected.Add(_rows[i]);
+            CancelSelection(); e.Handled = true;
+            _copying = true;
+            bool copied = await ClipboardService.CopyAsync(snapshot);
+            _copying = false;
+            if (_closed) return;
+            if (copied) { foreach (var row in selected) row.IsCopied = true; _feedbackUntil = DateTime.UtcNow.AddMilliseconds(1400); }
+            ShowToast(copied ? "已复制 " + selected.Count + " 段" : "复制失败，请稍后重试", !copied);
+        }
 
         private bool Drain()
         {
@@ -217,7 +377,7 @@ namespace CaptionCopy
                 _rows[i].IsDraft = sentences[i].IsDraft;
             }
             while (_rows.Count > sentences.Count) _rows.RemoveAt(_rows.Count - 1);
-            _count.Text = _rows.Count + " 段 · 点击复制";
+            _count.Text = _rows.Count + " 段 · 点击 / 拖选复制";
             _copyAll.IsEnabled = _clear.IsEnabled = _rows.Count > 0;
             _empty.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             if (_rows.Count == 0) _follow = true;

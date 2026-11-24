@@ -15,9 +15,11 @@
   <ItemGroup>
     <Compile Include="src\*.cs" />
     <EmbeddedResource Include="src\MainWindow.xaml" LogicalName="CaptionCopy.MainWindow.xaml" />
+    <EmbeddedResource Include="src\SettingsWindow.xaml" LogicalName="CaptionCopy.SettingsWindow.xaml" />
     <EmbeddedResource Include="assets\App.ico" LogicalName="CaptionCopy.App.ico" />
     <Reference Include="UIAutomationClient" />
     <Reference Include="UIAutomationTypes" />
     <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
   </ItemGroup>
 </Project>

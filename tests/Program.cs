@@ -296,6 +296,78 @@ internal static class Tests
             }
         });
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
+        Test("forward drag range copies inclusive rows in reading order", delegate
+        {
+            Equal("二" + Environment.NewLine + "三" + Environment.NewLine + "四", SelectionText.Join(new[] { "一", "二", "三", "四" }, 1, 3));
+        });
+        Test("reverse drag range preserves reading order", delegate
+        {
+            Equal("一" + Environment.NewLine + "二" + Environment.NewLine + "三", SelectionText.Join(new[] { "一", "二", "三", "四" }, 2, 0));
+        });
+        Test("single click range copies exactly one row", delegate
+        {
+            Equal("中文 English", SelectionText.Join(new[] { "其他", "中文 English" }, 1, 1));
+        });
+        Test("range keeps repeated sentences", delegate
+        {
+            Equal("重复" + Environment.NewLine + "重复", SelectionText.Join(new[] { "重复", "重复" }, 0, 1));
+        });
+        Test("invalid or empty selection cannot copy unrelated rows", delegate
+        {
+            Equal("", SelectionText.Join(new string[0], 0, 0));
+            Equal("", SelectionText.Join(new[] { "一" }, -1, 0));
+            Equal("", SelectionText.Join(new[] { "一" }, 0, 1));
+        });
+        Test("protected transparency keeps content opacity at one", delegate
+        {
+            var p = new AppPreferences { Opacity = .45, ProtectText = true };
+            True(p.WindowOpacity == 1 && p.BackgroundOpacity == .45, "text protection must not lower Window.Opacity");
+        });
+        Test("unprotected transparency fades the entire window", delegate
+        {
+            var p = new AppPreferences { Opacity = .45, ProtectText = false };
+            True(p.WindowOpacity == .45 && p.BackgroundOpacity == 1, "must not apply opacity twice");
+        });
+        Test("opacity limits prevent invisible windows and invalid values", delegate
+        {
+            var p = new AppPreferences { Opacity = 0 }; True(p.Opacity == .3, "minimum");
+            p.Opacity = 2; True(p.Opacity == 1, "maximum");
+            p.Opacity = double.NaN; True(p.Opacity == 1, "NaN");
+            p.Opacity = double.PositiveInfinity; True(p.Opacity == 1, "infinity");
+        });
+        Test("settings round trip saves preferences without transcripts", delegate
+        {
+            string path = Path.Combine(Path.GetTempPath(), "CaptionCopy-test-" + Guid.NewGuid() + ".xml");
+            try
+            {
+                True(PreferencesStore.Save(path, new AppPreferences { Opacity = .65, ProtectText = false }), "save failed");
+                var p = PreferencesStore.Load(path);
+                True(p.Opacity == .65 && !p.ProtectText, "round trip failed");
+                True(!File.ReadAllText(path).Contains("字幕"), "preferences should not contain captions");
+            }
+            finally { File.Delete(path); }
+        });
+        Test("corrupt settings recover to readable defaults", delegate
+        {
+            string path = Path.Combine(Path.GetTempPath(), "CaptionCopy-test-" + Guid.NewGuid() + ".xml");
+            try
+            {
+                File.WriteAllText(path, "<broken>");
+                var p = PreferencesStore.Load(path); True(p.Opacity == 1 && p.ProtectText, "bad defaults");
+                File.WriteAllText(path, "<CaptionCopy opacity='NaN' protectText='true' />");
+                True(PreferencesStore.Load(path).Opacity == 1, "unsafe opacity accepted");
+            }
+            finally { File.Delete(path); }
+        });
+        Test("missing settings use opaque protected defaults", delegate
+        {
+            var p = PreferencesStore.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".xml"));
+            True(p.Opacity == 1 && p.ProtectText, "missing settings defaults");
+        });
+        Test("settings save failure is recoverable", delegate
+        {
+            True(!PreferencesStore.Save(Path.GetTempPath(), new AppPreferences()), "directory should not be writable as an XML file");
+        });
         Test("clipboard preserves Unicode and exact newlines", delegate
         {
             string value = "中文。" + Environment.NewLine + "English draft";
